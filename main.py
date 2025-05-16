@@ -6,14 +6,14 @@ from fastapi import FastAPI, HTTPException, Query
 from playwright.async_api import async_playwright
 import requests
 from threading import Timer
+from dotenv import load_dotenv
 
-# Set browser cache for Render
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/mnt/cache/.playwright"
+load_dotenv()
+
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+USER_AGENT = os.getenv("USER_AGENT")
 
 app = FastAPI()
-
-YOUTUBE_API_KEY = "AIzaSyDYFu-jPat_hxdssXEK4y2QmCOkefEGnso"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
 
 def extract_video_id(url: str) -> str | None:
     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
@@ -44,14 +44,10 @@ async def fetch_stream_url(video_url: str) -> dict:
         await browser.close()
 
         if stream_url:
-            # Create a temp file (simulate download) and delete later
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
             temp_file.write(stream_url.encode())
             temp_file.close()
-
-            # Delete after 10 minutes
             Timer(600, lambda: os.remove(temp_file.name)).start()
-
             return {"stream_url": stream_url, "temp_file": temp_file.name}
         else:
             raise HTTPException(status_code=404, detail="Unable to extract video stream URL")

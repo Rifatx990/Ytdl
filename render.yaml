@@ -3,13 +3,12 @@ services:
     name: Ytdl
     runtime: python
     buildCommand: |
-      apt-get update && apt-get install -y wget libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxrandr2 libgbm1 libasound2 libpangocairo-1.0-0 libgtk-3-0
-      pip install --upgrade pip
-      pip install -r requirements.txt
-      python -m playwright install chromium
+      pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=/mnt/cache playwright install chromium
     startCommand: uvicorn main:app --host 0.0.0.0 --port 8000
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /mnt/cache/.playwright
       - key: YOUTUBE_API_KEY
-        value: AIzaSyDYFu-jPat_hxdssXEK4y2QmCOkefEGnso
-      - key: USER_AGENT
-        value: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36
+        sync: false

@@ -1,62 +1,53 @@
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import JSONResponse
-from pytube import YouTube
-from threading import Timer
-from collections import defaultdict
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import FileResponse
+import subprocess
 import os
-import uuid
+import threading
 import time
+import uuid
 
 app = FastAPI()
 
-# Per-IP rate limiting
-request_times = defaultdict(lambda: 0)
-MIN_INTERVAL = 3  # seconds
+COOKIES_FILE = "cookies.txt"  # Must be placed in the root directory
 
-@app.middleware("http")
-async def rate_limit(request: Request, call_next):
-    client_ip = request.client.host
-    current_time = time.time()
-
-    if current_time - request_times[client_ip] < MIN_INTERVAL:
-        return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again in a few seconds."})
-    
-    request_times[client_ip] = current_time
-    response = await call_next(request)
-    return response
+def delete_file_later(filepath: str, delay: int = 600):
+    def _delete():
+        time.sleep(delay)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    threading.Thread(target=_delete).start()
 
 @app.get("/")
-@app.head("/")
-async def root():
-    return {"message": "FastAPI YouTube Downloader is running!"}
+def root():
+    return {"message": "YouTube Downloader API is live."}
 
 @app.get("/download")
-async def download_video(
-    url: str,
-    format: str = Query("video", regex="^(video|audio)$")
+def download(
+    url: str = Query(..., description="YouTube video URL"),
+    format: str = Query("video", enum=["video", "audio"], description="Download format: video or audio")
 ):
     try:
-        yt = YouTube(url)
-        unique_id = str(uuid.uuid4())
+        if not os.path.exists(COOKIES_FILE):
+            raise HTTPException(status_code=500, detail="Missing cookies.txt file in root directory.")
 
-        if format == "audio":
-            stream = yt.streams.filter(only_audio=True).first()
-            file_path = stream.download(filename=f"{unique_id}.mp4")
-            base, ext = os.path.splitext(file_path)
-            new_file_path = f"{base}.mp3"
-            os.rename(file_path, new_file_path)
-            file_path = new_file_path
-        else:
-            stream = yt.streams.get_highest_resolution()
-            file_path = stream.download(filename=f"{unique_id}.mp4")
+        ext = "mp4" if format == "video" else "mp3"
+        out_name = f"{uuid.uuid4()}.{ext}"
 
-        # Schedule file deletion after 10 minutes
-        Timer(600, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
+        ytdlp_cmd = [
+            "yt-dlp",
+            "--cookies", COOKIES_FILE,
+            "-f", "best" if format == "video" else "bestaudio",
+            "-o", out_name,
+            url
+        ]
 
-        return {
-            "message": f"{format.capitalize()} downloaded successfully!",
-            "filename": os.path.basename(file_path)
-        }
+        subprocess.run(ytdlp_cmd, check=True)
 
+        delete_file_later(out_name)
+
+        return FileResponse(out_name, media_type="application/octet-stream", filename=out_name)
+
+    except subprocess.CalledProcessError as e:
+        raise HTTPException(status_code=400, detail=f"Download failed: {e}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error downloading: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Error: {e}")

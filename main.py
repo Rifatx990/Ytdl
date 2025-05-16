@@ -1,18 +1,18 @@
 import os
 import re
-import tempfile
 import asyncio
-from threading import Timer
+import tempfile
 from fastapi import FastAPI, HTTPException, Query
 from playwright.async_api import async_playwright
 import requests
+from threading import Timer
 
-# Set browser cache for Render
+# Ensure playwright browser cache path
 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/mnt/cache/.playwright"
 
 app = FastAPI()
 
-YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "")
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY", "AIzaSyDYFu-jPat_hxdssXEK4y2QmCOkefEGnso")
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
 
 def extract_video_id(url: str) -> str | None:
@@ -20,12 +20,15 @@ def extract_video_id(url: str) -> str | None:
     return match.group(1) if match else None
 
 def check_youtube_video(video_id: str) -> bool:
-    api_url = f"https://www.googleapis.com/youtube/v3/videos?part=status&id={video_id}&key={YOUTUBE_API_KEY}"
+    url = f"https://www.googleapis.com/youtube/v3/videos?part=status&id={video_id}&key={YOUTUBE_API_KEY}"
     try:
-        resp = requests.get(api_url, headers={"User-Agent": USER_AGENT})
+        resp = requests.get(url, headers={"User-Agent": USER_AGENT})
         resp.raise_for_status()
         data = resp.json()
-        return data.get("items", [{}])[0].get("status", {}).get("uploadStatus") == "processed"
+        if "items" in data and len(data["items"]) > 0:
+            status = data["items"][0]["status"]
+            return status.get("uploadStatus") == "processed"
+        return False
     except Exception as e:
         print(f"API error: {e}")
         return False
@@ -58,10 +61,15 @@ async def get_stream(url: str = Query(..., description="YouTube video URL")):
         raise HTTPException(status_code=400, detail="Invalid YouTube link or ID")
 
     if not check_youtube_video(video_id):
-        raise HTTPException(status_code=404, detail="Video not available")
+        raise HTTPException(status_code=404, detail="Video not available or not processed")
 
     try:
         stream_data = await fetch_stream_url(url)
         return {"video_id": video_id, **stream_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to extract stream: {str(e)}")
+
+# Local development support
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

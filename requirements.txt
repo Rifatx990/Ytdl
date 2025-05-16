@@ -1,5 +1,4 @@
 fastapi
-uvicorn[standard]
-yt-dlp
+uvicorn
 requests
-python-multipart
+playwright

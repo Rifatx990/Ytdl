@@ -2,23 +2,26 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pytube import YouTube
 from threading import Timer
+from collections import defaultdict
 import os
 import uuid
 import time
 
 app = FastAPI()
 
-# Simple global rate limiter (one request every 5 seconds)
-last_request_time = 0
-MIN_INTERVAL = 5  # seconds
+# Per-IP rate limiting
+request_times = defaultdict(lambda: 0)
+MIN_INTERVAL = 3  # seconds
 
 @app.middleware("http")
 async def rate_limit(request: Request, call_next):
-    global last_request_time
+    client_ip = request.client.host
     current_time = time.time()
-    if current_time - last_request_time < MIN_INTERVAL:
-        return JSONResponse(status_code=429, content={"detail": "Too many requests, slow down!"})
-    last_request_time = current_time
+
+    if current_time - request_times[client_ip] < MIN_INTERVAL:
+        return JSONResponse(status_code=429, content={"detail": "Too many requests. Try again in a few seconds."})
+    
+    request_times[client_ip] = current_time
     response = await call_next(request)
     return response
 
@@ -47,7 +50,7 @@ async def download_video(
             stream = yt.streams.get_highest_resolution()
             file_path = stream.download(filename=f"{unique_id}.mp4")
 
-        # Auto delete after 10 minutes
+        # Schedule file deletion after 10 minutes
         Timer(600, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
 
         return {

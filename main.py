@@ -1,12 +1,29 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pytube import YouTube
 from threading import Timer
 import os
 import uuid
+import time
 
 app = FastAPI()
 
+# Simple global rate limiter (one request every 5 seconds)
+last_request_time = 0
+MIN_INTERVAL = 5  # seconds
+
+@app.middleware("http")
+async def rate_limit(request: Request, call_next):
+    global last_request_time
+    current_time = time.time()
+    if current_time - last_request_time < MIN_INTERVAL:
+        return JSONResponse(status_code=429, content={"detail": "Too many requests, slow down!"})
+    last_request_time = current_time
+    response = await call_next(request)
+    return response
+
 @app.get("/")
+@app.head("/")
 async def root():
     return {"message": "FastAPI YouTube Downloader is running!"}
 
@@ -17,14 +34,11 @@ async def download_video(
 ):
     try:
         yt = YouTube(url)
-
-        # Generate unique filename (without extension)
         unique_id = str(uuid.uuid4())
 
         if format == "audio":
             stream = yt.streams.filter(only_audio=True).first()
             file_path = stream.download(filename=f"{unique_id}.mp4")
-            # Rename to .mp3 (optional, since it’s audio only)
             base, ext = os.path.splitext(file_path)
             new_file_path = f"{base}.mp3"
             os.rename(file_path, new_file_path)

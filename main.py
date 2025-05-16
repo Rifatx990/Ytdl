@@ -1,19 +1,21 @@
-import re
 import os
-import asyncio
+import re
 import tempfile
+import asyncio
 from fastapi import FastAPI, HTTPException, Query
 from playwright.async_api import async_playwright
 import requests
 from threading import Timer
+from dotenv import load_dotenv
 
-# Correct browser path for Render
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/opt/render/.cache/ms-playwright"
+load_dotenv()
+
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.getenv("PLAYWRIGHT_BROWSERS_PATH", "/opt/render/.cache/ms-playwright")
 
 app = FastAPI()
 
-YOUTUBE_API_KEY = "AIzaSyDYFu-jPat_hxdssXEK4y2QmCOkefEGnso"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
+YOUTUBE_API_KEY = os.getenv("YOUTUBE_API_KEY")
+USER_AGENT = os.getenv("USER_AGENT")
 
 def extract_video_id(url: str) -> str | None:
     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
@@ -44,12 +46,9 @@ async def fetch_stream_url(video_url: str) -> dict:
         await browser.close()
 
         if stream_url:
-            # Create temp file and delete later
             temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
             temp_file.write(stream_url.encode())
             temp_file.close()
-
-            # Delete after 10 minutes
             Timer(600, lambda: os.remove(temp_file.name)).start()
 
             return {"stream_url": stream_url, "temp_file": temp_file.name}
@@ -70,7 +69,3 @@ async def get_stream(url: str = Query(..., description="YouTube video URL")):
         return {"video_id": video_id, **stream_data}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to extract stream: {str(e)}")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

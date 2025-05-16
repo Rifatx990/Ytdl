@@ -1,58 +1,43 @@
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
-import subprocess
+from fastapi import FastAPI, Query, HTTPException
+from fastapi.responses import JSONResponse
+import yt_dlp
 import os
-import uuid
-import asyncio
+import logging
 
 app = FastAPI()
 
-COOKIE_FILE = "cookies.txt"  # Your cookies file in the same directory
+# Path to your cookies.txt (should be in same directory or specify full path)
+COOKIES_PATH = os.path.join(os.path.dirname(__file__), 'cookies.txt')
 
-async def delete_file_later(file_path: str, delay_sec: int = 600):
-    await asyncio.sleep(delay_sec)
-    if os.path.exists(file_path):
-        os.remove(file_path)
+# Setup logger
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-@app.get("/download")
-async def download_media(url: str = Query(...), format: str = Query("video", regex="^(video|audio)$")):
+@app.get("/downloads")
+async def download_video(url: str = Query(..., description="YouTube video URL")):
+    ydl_opts = {
+        'format': 'best',
+        'quiet': True,
+        'nocheckcertificate': True,
+        'cookies': COOKIES_PATH,
+        'skip_download': True,  # If you want metadata only, change as needed
+        # 'outtmpl': 'downloads/%(title)s.%(ext)s',  # for actual download path
+    }
+    
     try:
-        output_id = str(uuid.uuid4())
-        output_template = f"{output_id}.%(ext)s"
-
-        cmd = [
-            "yt-dlp",
-            "--no-warnings",
-            "--cookies", COOKIE_FILE,
-            "-o", output_template,
-            url
-        ]
-
-        if format == "audio":
-            cmd.extend(["-f", "bestaudio"])
-        else:
-            cmd.extend(["-f", "bestvideo+bestaudio/best"])
-
-        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
-
-        if proc.returncode != 0:
-            raise HTTPException(status_code=400, detail=f"DownloadError: {proc.stderr.strip()}")
-
-        downloaded_file = None
-        for file in os.listdir():
-            if file.startswith(output_id):
-                downloaded_file = file
-                break
-
-        if not downloaded_file or not os.path.exists(downloaded_file):
-            raise HTTPException(status_code=500, detail="Download failed; file missing.")
-
-        asyncio.create_task(delete_file_later(downloaded_file))
-
-        media_type = "audio/mpeg" if format == "audio" else "video/mp4"
-        return FileResponse(downloaded_file, media_type=media_type, filename=downloaded_file)
-
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=500, detail="Download process timed out.")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)  # download=False uses metadata only
+            # Optionally, you could download by setting download=True and removing skip_download
+            return JSONResponse(content={
+                "title": info.get("title"),
+                "id": info.get("id"),
+                "uploader": info.get("uploader"),
+                "duration": info.get("duration"),
+                "webpage_url": info.get("webpage_url"),
+            })
+    except yt_dlp.utils.DownloadError as e:
+        logger.error(f"DownloadError: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"DownloadError: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error downloading: {str(e)}")
+        logger.error(f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")

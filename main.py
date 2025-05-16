@@ -1,53 +1,58 @@
+import os
+import uuid
+import asyncio
 from fastapi import FastAPI, Query, HTTPException
 from fastapi.responses import FileResponse
-import subprocess
-import os
-import threading
-import time
-import uuid
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError
 
 app = FastAPI()
 
-COOKIES_FILE = "cookies.txt"  # Must be placed in the root directory
-
-def delete_file_later(filepath: str, delay: int = 600):
-    def _delete():
-        time.sleep(delay)
-        if os.path.exists(filepath):
-            os.remove(filepath)
-    threading.Thread(target=_delete).start()
+DOWNLOAD_DIR = "downloads"
+os.makedirs(DOWNLOAD_DIR, exist_ok=True)
 
 @app.get("/")
-def root():
+async def root():
     return {"message": "YouTube Downloader API is live."}
 
 @app.get("/download")
-def download(
-    url: str = Query(..., description="YouTube video URL"),
-    format: str = Query("video", enum=["video", "audio"], description="Download format: video or audio")
-):
+async def download_video(url: str = Query(...), format: str = Query("video")):
+    file_ext = "mp4" if format == "video" else "mp3"
+    unique_id = str(uuid.uuid4())
+    filename = os.path.join(DOWNLOAD_DIR, f"{unique_id}.{file_ext}")
+
+    ydl_opts = {
+        "outtmpl": filename,
+        "format": "bestaudio/best" if format == "audio" else "bestvideo+bestaudio/best",
+        "quiet": True,
+        "noplaylist": True,
+        "merge_output_format": "mp4" if format == "video" else "mp3",
+        "cookies": "cookies.txt" if os.path.exists("cookies.txt") else None,
+        "postprocessors": [{
+            'key': 'FFmpegExtractAudio',
+            'preferredcodec': 'mp3',
+            'preferredquality': '192'
+        }] if format == "audio" else [],
+    }
+
     try:
-        if not os.path.exists(COOKIES_FILE):
-            raise HTTPException(status_code=500, detail="Missing cookies.txt file in root directory.")
-
-        ext = "mp4" if format == "video" else "mp3"
-        out_name = f"{uuid.uuid4()}.{ext}"
-
-        ytdlp_cmd = [
-            "yt-dlp",
-            "--cookies", COOKIES_FILE,
-            "-f", "best" if format == "video" else "bestaudio",
-            "-o", out_name,
-            url
-        ]
-
-        subprocess.run(ytdlp_cmd, check=True)
-
-        delete_file_later(out_name)
-
-        return FileResponse(out_name, media_type="application/octet-stream", filename=out_name)
-
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=400, detail=f"Download failed: {e}")
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+    except DownloadError as e:
+        raise HTTPException(status_code=400, detail=f"DownloadError: {str(e)}")
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+    # Schedule file deletion in 10 minutes
+    asyncio.create_task(delete_file_later(filename, 600))
+
+    return FileResponse(
+        path=filename,
+        filename=info.get("title", unique_id) + f".{file_ext}",
+        media_type="application/octet-stream"
+    )
+
+async def delete_file_later(path: str, delay: int):
+    await asyncio.sleep(delay)
+    if os.path.exists(path):
+        os.remove(path)

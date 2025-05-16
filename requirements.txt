@@ -1,4 +1,8 @@
 fastapi
 uvicorn
 requests
+aiohttp
+beautifulsoup4
 playwright
+python-multipart
+jinja2

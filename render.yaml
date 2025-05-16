@@ -1,14 +1,11 @@
 services:
   - type: web
     name: Ytdl
-    env: python
-    plan: free
+    runtime: python
     buildCommand: |
-      pip install --upgrade pip
       pip install -r requirements.txt
-      playwright install
+      playwright install chromium
     startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
-      - key: PORT
-        value: 10000
-    autoDeploy: true
+      - key: PLAYWRIGHT_BROWSERS_PATH
+        value: /mnt/cache/.playwright

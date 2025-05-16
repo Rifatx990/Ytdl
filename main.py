@@ -1,43 +1,74 @@
-from fastapi import FastAPI, Query, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, Query
 import yt_dlp
-import os
-import logging
+import requests
 
 app = FastAPI()
 
-# Path to your cookies.txt (should be in same directory or specify full path)
-COOKIES_PATH = os.path.join(os.path.dirname(__file__), 'cookies.txt')
+YOUTUBE_API_KEY = "AIzaSyDYFu-jPat_hxdssXEK4y2QmCOkefEGnso"
 
-# Setup logger
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+def verify_youtube_video(video_id: str):
+    url = f"https://www.googleapis.com/youtube/v3/videos?part=status&id={video_id}&key={YOUTUBE_API_KEY}"
+    response = requests.get(url).json()
+    if response.get("pageInfo", {}).get("totalResults", 0) == 0:
+        return False
+    return True
+
+def search_youtube(query: str):
+    url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q={query}&key={YOUTUBE_API_KEY}"
+    response = requests.get(url).json()
+    items = response.get("items", [])
+    if not items:
+        return None
+    video_id = items[0]["id"]["videoId"]
+    return f"https://youtu.be/{video_id}"
+
+def extract_video_id(url: str):
+    # Basic extraction for YouTube video ID from URL
+    import re
+    patterns = [
+        r"youtu\.be\/([^?&]+)",
+        r"v=([^?&]+)",
+        r"\/embed\/([^?&]+)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, url)
+        if match:
+            return match.group(1)
+    return None
 
 @app.get("/downloads")
-async def download_video(url: str = Query(..., description="YouTube video URL")):
+async def download_video(url: str = Query(..., description="YouTube video URL or search query")):
+    video_id = extract_video_id(url)
+    if video_id:
+        valid = verify_youtube_video(video_id)
+        if not valid:
+            # If video ID invalid, treat URL param as search query
+            search_url = search_youtube(url)
+            if not search_url:
+                raise HTTPException(status_code=404, detail="No video found matching the query")
+            url = search_url
+    else:
+        # url param is probably a search query, not a direct URL
+        search_url = search_youtube(url)
+        if not search_url:
+            raise HTTPException(status_code=404, detail="No video found matching the query")
+        url = search_url
+
+    # Use yt-dlp with cookies.txt for download/info
     ydl_opts = {
-        'format': 'best',
+        'cookiefile': './cookies.txt',
         'quiet': True,
-        'nocheckcertificate': True,
-        'cookies': COOKIES_PATH,
-        'skip_download': True,  # If you want metadata only, change as needed
-        # 'outtmpl': 'downloads/%(title)s.%(ext)s',  # for actual download path
+        'skip_download': True,
     }
-    
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)  # download=False uses metadata only
-            # Optionally, you could download by setting download=True and removing skip_download
-            return JSONResponse(content={
+            info = ydl.extract_info(url, download=False)
+            return {
                 "title": info.get("title"),
                 "id": info.get("id"),
                 "uploader": info.get("uploader"),
                 "duration": info.get("duration"),
                 "webpage_url": info.get("webpage_url"),
-            })
-    except yt_dlp.utils.DownloadError as e:
-        logger.error(f"DownloadError: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"DownloadError: {str(e)}")
+            }
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"DownloadError: {str(e)}")

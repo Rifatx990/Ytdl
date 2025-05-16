@@ -1,14 +1,12 @@
 services:
   - type: web
-    name: Ytdl
-    runtime: python
+    name: playwright-stream-api
+    env: python
     buildCommand: |
-      pip install -r requirements.txt && PLAYWRIGHT_BROWSERS_PATH=/mnt/cache playwright install chromium
-    startCommand: python3 main.py
+      pip install -r requirements.txt
+      playwright install chromium
+    startCommand: python main.py
     envVars:
-      - key: PYTHON_VERSION
-        value: 3.11
       - key: PLAYWRIGHT_BROWSERS_PATH
-        value: /mnt/cache/.playwright
-      - key: YOUTUBE_API_KEY
-        sync: false
+        value: /opt/render/.cache/ms-playwright
+    plan: free

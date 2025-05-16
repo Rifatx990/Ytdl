@@ -1,48 +1,45 @@
 from fastapi import FastAPI, HTTPException, Query
 from pytube import YouTube
-from fastapi.responses import FileResponse
+from threading import Timer
 import os
 import uuid
-import threading
 
 app = FastAPI()
 
-DOWNLOAD_DIR = os.path.join(os.getcwd(), "downloads")
-COOKIE_PATH = os.path.join(os.getcwd(), "cookies.txt")
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-
-def delete_file_later(file_path: str, delay: int = 600):
-    def delete():
-        try:
-            os.remove(file_path)
-            print(f"Deleted: {file_path}")
-        except Exception as e:
-            print(f"Error deleting file: {e}")
-    threading.Timer(delay, delete).start()
+@app.get("/")
+async def root():
+    return {"message": "FastAPI YouTube Downloader is running!"}
 
 @app.get("/download")
-async def download_media(
-    url: str = Query(..., description="YouTube video URL"),
-    format: str = Query("video", description="Choose 'video' or 'audio'")
+async def download_video(
+    url: str,
+    format: str = Query("video", regex="^(video|audio)$")
 ):
     try:
-        # Initialize YouTube with cookies (if exists)
-        if os.path.exists(COOKIE_PATH):
-            yt = YouTube(url, use_oauth=False, allow_oauth_cache=True, cookies=COOKIE_PATH)
+        yt = YouTube(url)
+
+        # Generate unique filename (without extension)
+        unique_id = str(uuid.uuid4())
+
+        if format == "audio":
+            stream = yt.streams.filter(only_audio=True).first()
+            file_path = stream.download(filename=f"{unique_id}.mp4")
+            # Rename to .mp3 (optional, since it’s audio only)
+            base, ext = os.path.splitext(file_path)
+            new_file_path = f"{base}.mp3"
+            os.rename(file_path, new_file_path)
+            file_path = new_file_path
         else:
-            yt = YouTube(url)
+            stream = yt.streams.get_highest_resolution()
+            file_path = stream.download(filename=f"{unique_id}.mp4")
 
-        unique_filename = str(uuid.uuid4())
-        file_ext = "mp3" if format == "audio" else "mp4"
-        filename = f"{unique_filename}.{file_ext}"
-        file_path = os.path.join(DOWNLOAD_DIR, filename)
+        # Auto delete after 10 minutes
+        Timer(600, lambda: os.remove(file_path) if os.path.exists(file_path) else None).start()
 
-        stream = yt.streams.filter(only_audio=True).first() if format == "audio" else yt.streams.get_highest_resolution()
-        stream.download(output_path=DOWNLOAD_DIR, filename=filename)
-
-        delete_file_later(file_path)
-
-        return FileResponse(file_path, media_type="application/octet-stream", filename=filename)
+        return {
+            "message": f"{format.capitalize()} downloaded successfully!",
+            "filename": os.path.basename(file_path)
+        }
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error downloading: {str(e)}")

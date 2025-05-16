@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: youtube-downloader
+    name: Ytdl
     env: python
     plan: free
     buildCommand: |

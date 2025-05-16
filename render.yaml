@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: youtube-stream-api
+    name: Ytdl
     runtime: python
     buildCommand: |
       pip install --upgrade pip

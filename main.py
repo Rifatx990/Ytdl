@@ -1,19 +1,19 @@
 import re
 import os
 import asyncio
-import uuid
+import tempfile
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
 from playwright.async_api import async_playwright
 import requests
+from threading import Timer
+
+# Set browser cache for Render
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "/mnt/cache/.playwright"
 
 app = FastAPI()
 
 YOUTUBE_API_KEY = "AIzaSyDYFu-jPat_hxdssXEK4y2QmCOkefEGnso"
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
-             "(KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
-DOWNLOAD_DIR = "downloads"
-os.makedirs(DOWNLOAD_DIR, exist_ok=True)
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
 
 def extract_video_id(url: str) -> str | None:
     match = re.search(r"(?:v=|\/)([0-9A-Za-z_-]{11})", url)
@@ -33,37 +33,28 @@ def check_youtube_video(video_id: str) -> bool:
         print(f"API error: {e}")
         return False
 
-async def fetch_and_download(video_url: str) -> str:
+async def fetch_stream_url(video_url: str) -> dict:
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page(user_agent=USER_AGENT)
-        await page.goto(video_url)
-        await page.wait_for_selector("video")
-
+        await page.goto(video_url, timeout=60000)
+        await page.wait_for_selector("video", timeout=10000)
         video_tag = await page.query_selector("video")
         stream_url = await video_tag.get_attribute("src")
-
         await browser.close()
 
         if stream_url:
-            filename = f"{uuid.uuid4().hex}.mp4"
-            filepath = os.path.join(DOWNLOAD_DIR, filename)
-            r = requests.get(stream_url, stream=True, headers={"User-Agent": USER_AGENT})
-            with open(filepath, 'wb') as f:
-                for chunk in r.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            asyncio.create_task(delete_file_later(filepath, 600))  # 600 seconds = 10 min
-            return filepath
+            # Create a temp file (simulate download) and delete later
+            temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+            temp_file.write(stream_url.encode())
+            temp_file.close()
+
+            # Delete after 10 minutes
+            Timer(600, lambda: os.remove(temp_file.name)).start()
+
+            return {"stream_url": stream_url, "temp_file": temp_file.name}
         else:
             raise HTTPException(status_code=404, detail="Unable to extract video stream URL")
-
-async def delete_file_later(path: str, delay: int):
-    await asyncio.sleep(delay)
-    try:
-        os.remove(path)
-        print(f"Deleted: {path}")
-    except Exception as e:
-        print(f"Failed to delete {path}: {e}")
 
 @app.get("/stream")
 async def get_stream(url: str = Query(..., description="YouTube video URL")):
@@ -75,7 +66,7 @@ async def get_stream(url: str = Query(..., description="YouTube video URL")):
         raise HTTPException(status_code=404, detail="Video not available")
 
     try:
-        file_path = await fetch_and_download(url)
-        return FileResponse(file_path, media_type="video/mp4", filename=os.path.basename(file_path))
+        stream_data = await fetch_stream_url(url)
+        return {"video_id": video_id, **stream_data}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to process video: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to extract stream: {str(e)}")

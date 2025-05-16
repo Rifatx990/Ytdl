@@ -1,74 +1,71 @@
 from fastapi import FastAPI, HTTPException, Query
-import yt_dlp
+from yt_dlp import YoutubeDL
 import requests
+import logging
 
 app = FastAPI()
 
 YOUTUBE_API_KEY = "AIzaSyDYFu-jPat_hxdssXEK4y2QmCOkefEGnso"
+USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " \
+             "(KHTML, like Gecko) Chrome/113.0.0.0 Safari/537.36"
 
-def verify_youtube_video(video_id: str):
+logging.basicConfig(level=logging.INFO)
+
+def check_youtube_video(video_id: str) -> bool:
     url = f"https://www.googleapis.com/youtube/v3/videos?part=status&id={video_id}&key={YOUTUBE_API_KEY}"
-    response = requests.get(url).json()
-    if response.get("pageInfo", {}).get("totalResults", 0) == 0:
+    try:
+        resp = requests.get(url, headers={"User-Agent": USER_AGENT})
+        resp.raise_for_status()
+        data = resp.json()
+        if "items" in data and len(data["items"]) > 0:
+            status = data["items"][0]["status"]
+            return status.get("uploadStatus") == "processed" and not status.get("privacyStatus") == "private"
+        else:
+            return False
+    except Exception as e:
+        logging.error(f"Error checking video with YouTube API: {e}")
         return False
-    return True
 
-def search_youtube(query: str):
-    url = f"https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=1&q={query}&key={YOUTUBE_API_KEY}"
-    response = requests.get(url).json()
-    items = response.get("items", [])
-    if not items:
-        return None
-    video_id = items[0]["id"]["videoId"]
-    return f"https://youtu.be/{video_id}"
-
-def extract_video_id(url: str):
-    # Basic extraction for YouTube video ID from URL
+def extract_video_id(url: str) -> str | None:
+    # Simple extractor for youtube links (can be improved)
     import re
     patterns = [
-        r"youtu\.be\/([^?&]+)",
-        r"v=([^?&]+)",
-        r"\/embed\/([^?&]+)",
+        r"(?:v=|\/)([0-9A-Za-z_-]{11}).*",  # ?v=VIDEOID or /VIDEOID pattern
     ]
     for pattern in patterns:
-        match = re.search(pattern, url)
-        if match:
-            return match.group(1)
+        m = re.search(pattern, url)
+        if m:
+            return m.group(1)
     return None
 
-@app.get("/downloads")
-async def download_video(url: str = Query(..., description="YouTube video URL or search query")):
+@app.get("/download")
+async def download_video(url: str = Query(..., description="YouTube video URL")):
     video_id = extract_video_id(url)
-    if video_id:
-        valid = verify_youtube_video(video_id)
-        if not valid:
-            # If video ID invalid, treat URL param as search query
-            search_url = search_youtube(url)
-            if not search_url:
-                raise HTTPException(status_code=404, detail="No video found matching the query")
-            url = search_url
-    else:
-        # url param is probably a search query, not a direct URL
-        search_url = search_youtube(url)
-        if not search_url:
-            raise HTTPException(status_code=404, detail="No video found matching the query")
-        url = search_url
+    if not video_id:
+        raise HTTPException(status_code=400, detail="Invalid YouTube URL or unable to extract video ID")
 
-    # Use yt-dlp with cookies.txt for download/info
+    if not check_youtube_video(video_id):
+        raise HTTPException(status_code=404, detail="Video not found or unavailable")
+
     ydl_opts = {
-        'cookiefile': './cookies.txt',
+        'http_headers': {'User-Agent': USER_AGENT},
+        'cookiefile': 'cookies.txt',      # Use cookies.txt file from local directory
+        'format': 'best',
         'quiet': True,
-        'skip_download': True,
+        'no_warnings': True,
     }
+
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+        with YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             return {
                 "title": info.get("title"),
-                "id": info.get("id"),
                 "uploader": info.get("uploader"),
                 "duration": info.get("duration"),
                 "webpage_url": info.get("webpage_url"),
+                "thumbnail": info.get("thumbnail"),
+                "description": info.get("description"),
             }
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"DownloadError: {str(e)}")
+        logging.error(f"yt-dlp error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error processing video: {str(e)}")

@@ -6,3 +6,4 @@ beautifulsoup4
 playwright
 python-multipart
 jinja2
+python-dotenv

@@ -1,8 +1,14 @@
 services:
   - type: web
-    name: youtube-downloader-api
+    name: youtube-downloader
     env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port 8000
     plan: free
+    buildCommand: |
+      pip install --upgrade pip
+      pip install -r requirements.txt
+      playwright install
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
+    envVars:
+      - key: PORT
+        value: 10000
     autoDeploy: true
